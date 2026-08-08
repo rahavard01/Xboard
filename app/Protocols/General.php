@@ -172,16 +172,101 @@ class General extends AbstractProtocol
         // 处理TLS
         switch (data_get($server, 'protocol_settings.tls')) {
             case 1:
-                $config['security'] = "tls";
-                if ($fp = Helper::getTlsFingerprint(data_get($protocol_settings, 'utls'))) {
+                $config['security'] = 'tls';
+            
+                if ($fp = Helper::getTlsFingerprint(
+                    data_get($protocol_settings, 'utls')
+                )) {
                     $config['fp'] = $fp;
                 }
-                if ($serverName = data_get($protocol_settings, 'tls_settings.server_name')) {
+            
+                if ($serverName = data_get(
+                    $protocol_settings,
+                    'tls_settings.server_name'
+                )) {
                     $config['sni'] = $serverName;
                 }
-                if (data_get($protocol_settings, 'tls_settings.allow_insecure')) {
+            
+                /*
+                 * Xray TLS certificate pinning.
+                 *
+                 * Xboard's XHTTP Template stores custom fields inside
+                 * protocol_settings.network_settings, so we also read PCS/VCN
+                 * from there. The tls_settings paths are included for future
+                 * compatibility if dedicated TLS fields are added to the panel.
+                 */
+                $pcs = data_get(
+                    $protocol_settings,
+                    'tls_settings.pinnedPeerCertSha256'
+                );
+            
+                if (empty($pcs)) {
+                    $pcs = data_get(
+                        $protocol_settings,
+                        'tls_settings.pinned_peer_cert_sha256'
+                    );
+                }
+            
+                if (empty($pcs)) {
+                    $pcs = data_get(
+                        $protocol_settings,
+                        'network_settings.pinnedPeerCertSha256'
+                    );
+                }
+            
+                $vcn = data_get(
+                    $protocol_settings,
+                    'tls_settings.verifyPeerCertByName'
+                );
+            
+                if (empty($vcn)) {
+                    $vcn = data_get(
+                        $protocol_settings,
+                        'tls_settings.verify_peer_cert_by_name'
+                    );
+                }
+            
+                if (empty($vcn)) {
+                    $vcn = data_get(
+                        $protocol_settings,
+                        'network_settings.verifyPeerCertByName'
+                    );
+                }
+            
+                if (is_array($pcs)) {
+                    $pcs = implode(',', array_filter($pcs));
+                }
+            
+                if (is_array($vcn)) {
+                    $vcn = implode(',', array_filter($vcn));
+                }
+            
+                if (!empty($pcs)) {
+                    $config['pcs'] = trim((string) $pcs);
+                }
+            
+                if (!empty($vcn)) {
+                    $peerCertName = trim((string) $vcn);
+                
+                    // Happ / Streisand and some client parsers
+                    $config['pcn'] = $peerCertName;
+                
+                    // Official Xray share-link proposal
+                    $config['vcn'] = $peerCertName;
+                }
+            
+                /*
+                 * Keep allowInsecure only as a fallback for old nodes that
+                 * do not have PCS or VCN configured.
+                 */
+                if (
+                    empty($pcs) &&
+                    empty($vcn) &&
+                    data_get($protocol_settings, 'tls_settings.allow_insecure')
+                ) {
                     $config['allowInsecure'] = '1';
                 }
+            
                 break;
             case 2: //reality
                 $config['security'] = "reality";

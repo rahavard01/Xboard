@@ -29,5 +29,9 @@ return [
         'secret' => env('AWS_SECRET_ACCESS_KEY'),
         'region' => env('AWS_V2BOARD_REGION', 'us-east-1'),
     ],
+    
+    'speedbox' => [
+        'sub_key' => env('SPEEDBOX_SUB_KEY', ''),
+    ],    
 
 ];

@@ -10,7 +10,10 @@ use App\Services\ServerService;
 use App\Services\UserService;
 use App\Utils\Helper;
 use Illuminate\Http\Request;
-
+#اضافه شد برای تبدیل تاریخ به شمسی
+use Carbon\Carbon;
+use Morilog\Jalali\Jalalian;
+#تا اینجا
 class ClientController extends Controller
 {
     /**
@@ -42,10 +45,39 @@ class ClientController extends Controller
 
         $user = $request->user();
         $userService = new UserService();
-
+        $useTraffic = $user['u'] + $user['d'];
+        $remainingTraffic = $user['transfer_enable'] - $useTraffic;
+        
+        if ($remainingTraffic <= 0) {
+        
+            $account = $user['email'] ?? 'unknown';
+            $accountName = str_replace(["@", ".com"], ["-", ""], $account);
+        
+            $userName = rawurlencode("👤 USER ：{$accountName}");
+            $trafficName = rawurlencode('⛔ ترافیک شما به اتمام رسید ⛔');
+        
+            $disabledLinks = implode("\n", [
+                "vless://00000000-0000-0000-0000-000000000001@0.0.0.0:1?encryption=none&type=tcp#{$trafficName}",
+                "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?encryption=none&type=tcp#{$userName}",
+            ]);
+        
+            return response($disabledLinks, 200, ['Content-Type' => 'text/plain']);
+        }
         if (!$userService->isAvailable($user)) {
             HookManager::call('client.subscribe.unavailable');
-            return response('', 403, ['Content-Type' => 'text/plain']);
+        
+            $account = $user['email'] ?? 'unknown';
+            $accountName = str_replace(["@", ".com"], ["-", ""], $account);
+        
+            $userName = rawurlencode("👤 USER ：{$accountName}");
+            $expiredName = rawurlencode('⛔️ اکانت شما منقضی شد ⛔️');
+        
+            $disabledLinks = implode("\n", [
+                "vless://00000000-0000-0000-0000-000000000001@0.0.0.0:1?encryption=none&type=tcp#{$expiredName}",
+                "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?encryption=none&type=tcp#{$userName}",
+            ]);
+        
+            return response($disabledLinks, 200, ['Content-Type' => 'text/plain']);
         }
 
         return $this->doSubscribe($request, $user);
@@ -72,7 +104,54 @@ class ClientController extends Controller
             filterKeywords: $filterKeywords
         );
 
-        $this->setSubscribeInfoToServers($serversFiltered, $user, count($servers) - count($serversFiltered));
+        // ✅ SpeedBox-only nodes (SBONLY)
+        $speedboxKey = config('services.speedbox.sub_key', '');
+        $reqKey = (string) $request->header('X-SpeedBox-Key', '');
+        $isSpeedBox = ($speedboxKey !== '' && hash_equals($speedboxKey, $reqKey));
+
+        $hasSBOnly = function ($server) {
+            $name = $server['name'] ?? '';
+            $tags = $server['tags'] ?? [];
+
+            // name contains SBONLY
+            if (stripos($name, 'SBONLY') !== false) return true;
+
+            // tags contains SBONLY (case-insensitive)
+            foreach ($tags as $t) {
+                if (is_string($t) && strcasecmp($t, 'SBONLY') === 0) return true;
+            }
+
+            return false;
+        };
+
+        if (!$isSpeedBox) {
+            // For all other clients: hide SBONLY nodes completely
+            $serversFiltered = collect($serversFiltered)
+                ->reject(fn($s) => $hasSBOnly($s))
+                ->values()
+                ->all();
+        } else {
+            // For SpeedBox: keep them, but clean the name so SBONLY doesn't appear in UI
+            $serversFiltered = collect($serversFiltered)
+                ->map(function ($s) {
+                    if (!isset($s['name'])) return $s;
+
+                    // remove SBONLY token in common formats: "SBONLY", "[SBONLY]", "(SBONLY)"
+                    $n = (string) $s['name'];
+                    $n = preg_replace('/\s*[\[\(]?\s*SBONLY\s*[\]\)]?\s*/i', ' ', $n);
+                    // normalize separators/spaces
+                    $n = preg_replace('/\s{2,}/', ' ', $n);
+                    $n = preg_replace('/\s*-\s*/', ' - ', $n);
+                    $n = trim($n);
+
+                    $s['name'] = $n;
+                    return $s;
+                })
+                ->values()
+                ->all();
+        }
+        
+        $this->setSubscribeInfoToServers($serversFiltered, $user, 0);
         $serversFiltered = $this->addPrefixToServerName($serversFiltered);
 
         // Instantiate the protocol class with filtered servers and client info
@@ -80,8 +159,7 @@ class ClientController extends Controller
             'user' => $user,
             'servers' => $serversFiltered,
             'clientName' => $clientInfo['name'] ?? null,
-            'clientVersion' => $clientInfo['version'] ?? null,
-            'userAgent' => $clientInfo['flag'] ?? null
+            'clientVersion' => $clientInfo['version'] ?? null
         ]);
 
         return $protocolInstance->handle();
@@ -190,6 +268,7 @@ class ClientController extends Controller
         ];
     }
 
+#این تابع تغییر کرد داخلش برای عبارت های مختلف و تبدیل تاریخ به شمسی
     private function setSubscribeInfoToServers(&$servers, $user, $rejectServerCount = 0)
     {
         if (!isset($servers[0]))
@@ -201,25 +280,60 @@ class ClientController extends Controller
         }
         if (!(int) admin_setting('show_info_to_server_enable', 0))
             return;
-        $useTraffic = $user['u'] + $user['d'];
-        $totalTraffic = $user['transfer_enable'];
-        $remainingTraffic = Helper::trafficConvert($totalTraffic - $useTraffic);
-        $expiredDate = $user['expired_at'] ? date('Y-m-d', $user['expired_at']) : __('长期有效');
+        $firstServerName = $servers[0]['name'] ?? '';
+        
+        preg_match('/^(\p{Regional_Indicator}{2})/u', $firstServerName, $matches);
+        
+        $flagEmoji = $matches[1] ?? '';     
+        
+        $useTraffic = round($user['u'] / (1024 * 1024 * 1024), 2) + round($user['d'] / (1024 * 1024 * 1024), 2);
+        $totalTraffic = round($user['transfer_enable'] / (1024 * 1024 * 1024), 2);
+        $remainingTraffic = round($totalTraffic - $useTraffic, 2);
+        $expiredDate = $user['expired_at'] ? date('Y-m-d', $user['expired_at']) : __('Updating Soon ...');
+        $expiredDate1 = $user['expired_at']
+            ? Jalalian::fromCarbon(Carbon::createFromTimestamp($user['expired_at']))->format('Y-m-d')
+            : __('Updating Soon ...');
         $userService = new UserService();
         $resetDay = $userService->getResetDay($user);
+        $account = $user['email'];
+        $account1 = str_replace(["@", ".com"], ["-", ""], $account);
+#        $remain_date=round ((strtotime($expiredDate)-strtotime(date("m/d/Y")))/86400);
+        $remain_date = null;
+        
+        if ($expiredDate && strtotime($expiredDate) >= strtotime(date("Y-m-d"))) {
+            $remain_date = round((strtotime($expiredDate) - strtotime(date("Y-m-d"))) / 86400);
+        }
+        $remainingTrafficValue = floatval($remainingTraffic);
         array_unshift($servers, array_merge($servers[0], [
-            'name' => "套餐到期：{$expiredDate}",
+            'name' => "{$flagEmoji}⛔️️ Expire ：{$expiredDate1} / {$remain_date} Days",
         ]));
         if ($resetDay) {
             array_unshift($servers, array_merge($servers[0], [
-                'name' => "距离下次重置剩余：{$resetDay} 天",
+                'name' => "{$flagEmoji}♻️ Reset Traffic ：{$resetDay} Days",
             ]));
         }
         array_unshift($servers, array_merge($servers[0], [
-            'name' => "剩余流量：{$remainingTraffic}",
+            'name' => "{$flagEmoji}👤 USER  ：{$account1} ",
         ]));
+        array_unshift($servers, array_merge($servers[0], [
+            'name' => "{$flagEmoji}☠️ Remaining Traffic  ：{$remainingTraffic} GB",
+        ]));
+        if (in_array((string)$remain_date, ['0', '1', '2'])) {
+            array_unshift($servers, array_merge($servers[0], [
+                'name' => "{$flagEmoji}❌ اکانت شما رو به اتمام است ❌",
+            ]));
+        }
+        if ($remainingTraffic <= 0) {
+            array_unshift($servers, array_merge($servers[0], [
+                'name' => "{$flagEmoji}⛔ ترافیک شما به اتمام رسید ⛔",
+            ]));
+        } elseif ($remainingTraffic <= 1) {
+            array_unshift($servers, array_merge($servers[0], [
+                'name' => "{$flagEmoji}❌ ترافیک شما رو به اتمام است ❌",
+            ]));
+        }
     }
-
+#تا اینجا
     private function addPrefixToServerName(array $servers): array
     {
         if (!admin_setting('show_protocol_to_server_enable', false)) {
