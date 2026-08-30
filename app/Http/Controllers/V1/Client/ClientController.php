@@ -14,6 +14,11 @@ use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Morilog\Jalali\Jalalian;
 #تا اینجا
+use BaconQrCode\Renderer\Image\SvgImageBackEnd;
+use BaconQrCode\Renderer\ImageRenderer;
+use BaconQrCode\Renderer\RendererStyle\RendererStyle;
+use BaconQrCode\Writer;
+
 class ClientController extends Controller
 {
     /**
@@ -45,38 +50,41 @@ class ClientController extends Controller
 
         $user = $request->user();
         $userService = new UserService();
+        if ($this->shouldRenderSubscriptionPage($request)) {
+            return $this->renderSubscriptionPage($request, $user, $userService);
+        }
         $useTraffic = $user['u'] + $user['d'];
         $remainingTraffic = $user['transfer_enable'] - $useTraffic;
-        
+
         if ($remainingTraffic <= 0) {
-        
+
             $account = $user['email'] ?? 'unknown';
             $accountName = str_replace(["@", ".com"], ["-", ""], $account);
-        
+
             $userName = rawurlencode("👤 USER ：{$accountName}");
             $trafficName = rawurlencode('⛔ ترافیک شما به اتمام رسید ⛔');
-        
+
             $disabledLinks = implode("\n", [
                 "vless://00000000-0000-0000-0000-000000000001@0.0.0.0:1?encryption=none&type=tcp#{$trafficName}",
                 "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?encryption=none&type=tcp#{$userName}",
             ]);
-        
+
             return response($disabledLinks, 200, ['Content-Type' => 'text/plain']);
         }
         if (!$userService->isAvailable($user)) {
             HookManager::call('client.subscribe.unavailable');
-        
+
             $account = $user['email'] ?? 'unknown';
             $accountName = str_replace(["@", ".com"], ["-", ""], $account);
-        
+
             $userName = rawurlencode("👤 USER ：{$accountName}");
             $expiredName = rawurlencode('⛔️ اکانت شما منقضی شد ⛔️');
-        
+
             $disabledLinks = implode("\n", [
                 "vless://00000000-0000-0000-0000-000000000001@0.0.0.0:1?encryption=none&type=tcp#{$expiredName}",
                 "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?encryption=none&type=tcp#{$userName}",
             ]);
-        
+
             return response($disabledLinks, 200, ['Content-Type' => 'text/plain']);
         }
 
@@ -150,7 +158,7 @@ class ClientController extends Controller
                 ->values()
                 ->all();
         }
-        
+
         $this->setSubscribeInfoToServers($serversFiltered, $user, 0);
         $serversFiltered = $this->addPrefixToServerName($serversFiltered);
 
@@ -281,11 +289,11 @@ class ClientController extends Controller
         if (!(int) admin_setting('show_info_to_server_enable', 0))
             return;
         $firstServerName = $servers[0]['name'] ?? '';
-        
+
         preg_match('/^(\p{Regional_Indicator}{2})/u', $firstServerName, $matches);
-        
-        $flagEmoji = $matches[1] ?? '';     
-        
+
+        $flagEmoji = $matches[1] ?? '';
+
         $useTraffic = round($user['u'] / (1024 * 1024 * 1024), 2) + round($user['d'] / (1024 * 1024 * 1024), 2);
         $totalTraffic = round($user['transfer_enable'] / (1024 * 1024 * 1024), 2);
         $remainingTraffic = round($totalTraffic - $useTraffic, 2);
@@ -299,7 +307,7 @@ class ClientController extends Controller
         $account1 = str_replace(["@", ".com"], ["-", ""], $account);
 #        $remain_date=round ((strtotime($expiredDate)-strtotime(date("m/d/Y")))/86400);
         $remain_date = null;
-        
+
         if ($expiredDate && strtotime($expiredDate) >= strtotime(date("Y-m-d"))) {
             $remain_date = round((strtotime($expiredDate) - strtotime(date("Y-m-d"))) / 86400);
         }
@@ -357,5 +365,68 @@ class ClientController extends Controller
             ? self::PROTOCOL_PREFIXES[$type][$server['protocol_settings']['version'] ?? 1] ?? ''
             : self::PROTOCOL_PREFIXES[$type];
         return $prefix . ($server['name'] ?? '');
+    }
+
+    private function shouldRenderSubscriptionPage(Request $request): bool
+    {
+        if ($request->filled('flag')) {
+            return false;
+        }
+
+        $clientInfo = $this->getClientInfo($request);
+
+        if (!empty($clientInfo['name'])) {
+            return false;
+        }
+
+        $accept = strtolower((string) $request->header('Accept', ''));
+        $fetchDest = strtolower((string) $request->header('Sec-Fetch-Dest', ''));
+        $fetchMode = strtolower((string) $request->header('Sec-Fetch-Mode', ''));
+
+        return str_contains($accept, 'text/html')
+            && ($fetchDest === 'document' || $fetchMode === 'navigate');
+    }
+
+    private function renderSubscriptionPage(Request $request, $user, UserService $userService)
+    {
+        $usedBytes = max(0, (int) $user['u'] + (int) $user['d']);
+        $totalBytes = max(0, (int) $user['transfer_enable']);
+        $remainingBytes = max(0, $totalBytes - $usedBytes);
+
+        $isActive = !$user['banned']
+            && $remainingBytes > 0
+            && ($user['expired_at'] === null || $user['expired_at'] > time());
+
+        $expiredDate = $user['expired_at']
+            ? Jalalian::fromCarbon(Carbon::createFromTimestamp($user['expired_at']))->format('Y/m/d')
+            : 'بدون تاریخ انقضا';
+
+        $subscriptionUrl = $request->url();
+
+        $renderer = new ImageRenderer(
+            new RendererStyle(256),
+            new SvgImageBackEnd()
+        );
+
+        $writer = new Writer($renderer);
+        $qrCode = base64_encode($writer->writeString($subscriptionUrl));
+
+        return response()
+            ->view('client.subscribe', [
+                'username' => str_replace(['@', '.com'], ['-', ''], $user['email'] ?? 'unknown'),
+                'status' => $isActive ? 'active' : 'inactive',
+                'data_used' => round($usedBytes / 1073741824, 2) . ' GB',
+                'data_limit' => round($totalBytes / 1073741824, 2) . ' GB',
+                'data_remaining' => round($remainingBytes / 1073741824, 2) . ' GB',
+                'usage_percent' => $totalBytes > 0 ? min(100, round(($usedBytes / $totalBytes) * 100, 1)) : 0,
+                'expired_date' => $expiredDate,
+                'device_limit' => $user['device_limit'] ?? null,
+                'reset_day' => $userService->getResetDay($user),
+                'subscription_url' => $subscriptionUrl,
+                'qr_code' => $qrCode,
+            ])
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->header('Pragma', 'no-cache')
+            ->header('X-Robots-Tag', 'noindex, nofollow, noarchive');
     }
 }
