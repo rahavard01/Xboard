@@ -23,26 +23,24 @@ class UserService
      */
     public function getResetDay(User $user): ?int
     {
-        // Use TrafficResetService to calculate the next reset time
-        $trafficResetService = app(TrafficResetService::class);
-        $nextResetTime = $trafficResetService->calculateNextResetTime($user);
+        $resetTimestamp = $user->getRawOriginal('next_reset_at');
 
-        if (!$nextResetTime) {
-            return null;
+        if ($resetTimestamp === null) {
+            $nextResetTime = app(TrafficResetService::class)->calculateNextResetTime($user);
+            if (!$nextResetTime) {
+                return null;
+            }
+            $resetTimestamp = $nextResetTime->timestamp;
         }
 
-        // Calculate the remaining days from now to the next reset time
         $now = time();
-        $resetTimestamp = $nextResetTime->timestamp;
+        $resetTimestamp = (int) $resetTimestamp;
 
         if ($resetTimestamp <= $now) {
-            return 0; // Reset time has passed or is now
+            return 0;
         }
 
-        // Calculate the difference in days (rounded up)
-        $daysDifference = ceil(($resetTimestamp - $now) / 86400);
-
-        return (int) $daysDifference;
+        return (int) ceil(($resetTimestamp - $now) / 86400);
     }
 
     public function isAvailable(User $user)
