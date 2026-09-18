@@ -211,6 +211,11 @@ class ServerSave extends FormRequest
             [
                 'tls.server_name' => 'nullable|string',
                 'tls.allow_insecure' => 'nullable|boolean',
+                'tls.pinned_peer_cert_sha256' => [
+                    'nullable',
+                    'string',
+                    'regex:/^[A-Fa-f0-9]{64}$/',
+                ],
                 'tls.ech' => 'nullable|array',
             ],
             $this->prefixRules('tls.ech.', self::ECH_RULES),

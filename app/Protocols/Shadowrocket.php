@@ -173,7 +173,35 @@ class Shadowrocket extends AbstractProtocol
     public static function buildVless($uuid, $server)
     {
         $protocol_settings = $server['protocol_settings'];
-        $userinfo = base64_encode('auto:' . $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port']);
+
+        $vlessEncryptionEnabled = (bool) data_get(
+            $protocol_settings,
+            'encryption.enabled',
+            false
+        );
+
+        $vlessEncryption = $vlessEncryptionEnabled
+            ? trim((string) data_get(
+                $protocol_settings,
+                'encryption.encryption',
+                ''
+            ))
+            : '';
+
+        $shadowrocketMethod = $vlessEncryption !== ''
+            ? $vlessEncryption
+            : 'auto';
+
+        $userinfo = base64_encode(
+            $shadowrocketMethod
+            . ':'
+            . $uuid
+            . '@'
+            . Helper::wrapIPv6($server['host'])
+            . ':'
+            . $server['port']
+        );
+
         $config = [
             'tfo' => 1,
             'remark' => $server['name'],
@@ -443,7 +471,7 @@ class Shadowrocket extends AbstractProtocol
     }
 
     public static function buildSocks($password, $server)
-    {   
+    {
         $protocol_settings = $server['protocol_settings'];
         $name = rawurlencode($server['name']);
         $addr = Helper::wrapIPv6($server['host']);

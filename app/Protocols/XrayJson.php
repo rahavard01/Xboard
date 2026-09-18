@@ -347,12 +347,6 @@ class XrayJson extends AbstractProtocol
     {
         return [
             [
-                'network' => 'udp',
-                'outboundTag' => 'block',
-                'port' => '443',
-                'type' => 'field',
-            ],
-            [
                 'ip' => ['geoip:private'],
                 'outboundTag' => 'direct',
                 'type' => 'field',
@@ -575,11 +569,47 @@ class XrayJson extends AbstractProtocol
      */
     private function buildHysteria2Outbound(array $server, string $tag): array
     {
-        $protocolSettings = (array) data_get($server, 'protocol_settings', []);
+        $protocolSettings = (array) data_get(
+            $server,
+            'protocol_settings',
+            []
+        );
 
         $serverName = $this->firstString(
             data_get($protocolSettings, 'tls.server_name')
         );
+
+        $tlsSettings = [
+            'alpn' => ['h3'],
+            'fingerprint' => 'chrome',
+            'serverName' => $serverName,
+        ];
+
+        /*
+         * Xray no longer accepts allowInsecure. For self-signed Hysteria
+         * certificates, use the SHA-256 certificate pin stored on each node.
+         */
+        $pinnedPeerCertSha256 = data_get(
+            $protocolSettings,
+            'tls.pinned_peer_cert_sha256'
+        );
+
+        if (
+            is_string($pinnedPeerCertSha256)
+            && trim($pinnedPeerCertSha256) !== ''
+        ) {
+            $normalizedPin = strtolower(
+                str_replace(
+                    ':',
+                    '',
+                    trim($pinnedPeerCertSha256)
+                )
+            );
+
+            if (preg_match('/^[a-f0-9]{64}$/', $normalizedPin) === 1) {
+                $tlsSettings['pinnedPeerCertSha256'] = $normalizedPin;
+            }
+        }
 
         $streamSettings = [
             'method' => 'hysteria',
@@ -592,12 +622,43 @@ class XrayJson extends AbstractProtocol
             'sockopt' => [
                 'domainStrategy' => 'UseIPv4',
             ],
-            'tlsSettings' => $this->removeEmptyStrings([
-                'alpn' => ['h3'],
-                'fingerprint' => 'chrome',
-                'serverName' => $serverName,
-            ]),
+            'tlsSettings' => $this->removeEmptyStrings($tlsSettings),
         ];
+
+        $obfsEnabled = (bool) data_get(
+            $protocolSettings,
+            'obfs.open',
+            false
+        );
+
+        $obfsType = strtolower(trim((string) data_get(
+            $protocolSettings,
+            'obfs.type',
+            ''
+        )));
+
+        $obfsPassword = trim((string) data_get(
+            $protocolSettings,
+            'obfs.password',
+            ''
+        ));
+
+        if (
+            $obfsEnabled
+            && $obfsType === 'salamander'
+            && $obfsPassword !== ''
+        ) {
+            $streamSettings['finalmask'] = [
+                'udp' => [
+                    [
+                        'type' => 'salamander',
+                        'settings' => [
+                            'password' => $obfsPassword,
+                        ],
+                    ],
+                ],
+            ];
+        }
 
         return [
             'protocol' => 'hysteria',

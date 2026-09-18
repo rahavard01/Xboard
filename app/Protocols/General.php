@@ -161,7 +161,7 @@ class General extends AbstractProtocol
 
         $config = [
             'mode' => 'multi', //grpc传输模式
-            'security' => '', //传输层安全 tls/reality
+            'security' => 'none', //传输层安全 tls/reality
             'encryption' => match (data_get($protocol_settings, 'encryption.enabled')) {
                 true => data_get($protocol_settings, 'encryption.encryption', 'none'),
                 default => 'none'
@@ -173,20 +173,20 @@ class General extends AbstractProtocol
         switch (data_get($server, 'protocol_settings.tls')) {
             case 1:
                 $config['security'] = 'tls';
-            
+
                 if ($fp = Helper::getTlsFingerprint(
                     data_get($protocol_settings, 'utls')
                 )) {
                     $config['fp'] = $fp;
                 }
-            
+
                 if ($serverName = data_get(
                     $protocol_settings,
                     'tls_settings.server_name'
                 )) {
                     $config['sni'] = $serverName;
                 }
-            
+
                 /*
                  * Xray TLS certificate pinning.
                  *
@@ -199,62 +199,62 @@ class General extends AbstractProtocol
                     $protocol_settings,
                     'tls_settings.pinnedPeerCertSha256'
                 );
-            
+
                 if (empty($pcs)) {
                     $pcs = data_get(
                         $protocol_settings,
                         'tls_settings.pinned_peer_cert_sha256'
                     );
                 }
-            
+
                 if (empty($pcs)) {
                     $pcs = data_get(
                         $protocol_settings,
                         'network_settings.pinnedPeerCertSha256'
                     );
                 }
-            
+
                 $vcn = data_get(
                     $protocol_settings,
                     'tls_settings.verifyPeerCertByName'
                 );
-            
+
                 if (empty($vcn)) {
                     $vcn = data_get(
                         $protocol_settings,
                         'tls_settings.verify_peer_cert_by_name'
                     );
                 }
-            
+
                 if (empty($vcn)) {
                     $vcn = data_get(
                         $protocol_settings,
                         'network_settings.verifyPeerCertByName'
                     );
                 }
-            
+
                 if (is_array($pcs)) {
                     $pcs = implode(',', array_filter($pcs));
                 }
-            
+
                 if (is_array($vcn)) {
                     $vcn = implode(',', array_filter($vcn));
                 }
-            
+
                 if (!empty($pcs)) {
                     $config['pcs'] = trim((string) $pcs);
                 }
-            
+
                 if (!empty($vcn)) {
                     $peerCertName = trim((string) $vcn);
-                
+
                     // Happ / Streisand and some client parsers
                     $config['pcn'] = $peerCertName;
-                
+
                     // Official Xray share-link proposal
                     $config['vcn'] = $peerCertName;
                 }
-            
+
                 /*
                  * Keep allowInsecure only as a fallback for old nodes that
                  * do not have PCS or VCN configured.
@@ -266,7 +266,7 @@ class General extends AbstractProtocol
                 ) {
                     $config['allowInsecure'] = '1';
                 }
-            
+
                 break;
             case 2: //reality
                 $config['security'] = "reality";
@@ -284,6 +284,39 @@ class General extends AbstractProtocol
         }
         // 处理传输协议
         switch (data_get($server, 'protocol_settings.network')) {
+            case 'tcp':
+                $headerType = data_get(
+                    $protocol_settings,
+                    'network_settings.header.type',
+                    'none'
+                );
+
+                $config['headerType'] = $headerType;
+
+                if ($headerType !== 'none') {
+                    $paths = data_get(
+                        $protocol_settings,
+                        'network_settings.header.request.path',
+                        ['/']
+                    );
+
+                    $hosts = data_get(
+                        $protocol_settings,
+                        'network_settings.header.request.headers.Host',
+                        []
+                    );
+
+                    $config['path'] = is_array($paths)
+                        ? Arr::random($paths)
+                        : $paths;
+
+                    if (!empty($hosts)) {
+                        $config['host'] = is_array($hosts)
+                            ? Arr::random($hosts)
+                            : $hosts;
+                    }
+                }
+                break;
             case 'ws':
                 if ($path = data_get($protocol_settings, 'network_settings.path'))
                     $config['path'] = $path;

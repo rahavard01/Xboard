@@ -209,6 +209,10 @@ class Server extends Model
         'fields' => [
             'server_name' => ['type' => 'string', 'default' => null],
             'allow_insecure' => ['type' => 'boolean', 'default' => false],
+            'pinned_peer_cert_sha256' => [
+                'type' => 'string',
+                'default' => null,
+            ],
             ...self::ECH_CONFIGURATION,
         ]
     ];
