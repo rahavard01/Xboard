@@ -146,7 +146,7 @@ class XrayJson extends AbstractProtocol
             $configs[] = $this->buildSmartConfig(
                 $allSmartOutbounds,
                 array_values(array_unique($allDnsDomains)),
-                self::SMART_NAME . ' 🌐 ALL'
+                self::SMART_NAME . ' ALL 🌐'
             );
         }
 
