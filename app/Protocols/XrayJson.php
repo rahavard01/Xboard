@@ -94,8 +94,9 @@ class XrayJson extends AbstractProtocol
         }
 
         $configs = [];
-        $smartOutbounds = [];
-        $dnsDomains = [];
+        $smartGroups = [];
+        $allSmartOutbounds = [];
+        $allDnsDomains = [];
 
         // Xboard information entries are clones of the first real node. If
         // that first node is unsupported by Xray JSON, rebuild the information
@@ -107,8 +108,12 @@ class XrayJson extends AbstractProtocol
             $configs[] = $this->buildSingleConfig($server);
         }
 
-        // Build the SMART profile only from real, supported proxy nodes.
+        // Build one SMART profile per country. Country flags are read from
+        // node names (for example, "🇩🇪 Germany 1"). Nodes without a flag
+        // are kept together in a separate "Other" SMART profile.
         foreach ($supportedProxyServers as $index => $server) {
+            [$countryKey, $countryLabel] = $this->detectCountryGroup($server);
+
             $tag = self::SMART_OUTBOUND_PREFIX
                 . $this->makeTagSuffix($server, $index);
 
@@ -117,15 +122,41 @@ class XrayJson extends AbstractProtocol
                 continue;
             }
 
-            $smartOutbounds[] = $outbound;
-            $this->appendDnsDomain($dnsDomains, $server);
+            $allSmartOutbounds[] = $outbound;
+            $this->appendDnsDomain($allDnsDomains, $server);
+
+            if (!isset($smartGroups[$countryKey])) {
+                $smartGroups[$countryKey] = [
+                    'label' => $countryLabel,
+                    'outbounds' => [],
+                    'dnsDomains' => [],
+                ];
+            }
+
+            $smartGroups[$countryKey]['outbounds'][] = $outbound;
+            $this->appendDnsDomain(
+                $smartGroups[$countryKey]['dnsDomains'],
+                $server
+            );
         }
 
-        // Required order: Xboard information → SMART SERVER → normal nodes.
-        if ($smartOutbounds !== []) {
+        // Required order: Xboard information → all-country SMART profile →
+        // country SMART profiles → normal nodes.
+        if ($allSmartOutbounds !== []) {
             $configs[] = $this->buildSmartConfig(
-                $smartOutbounds,
-                array_values(array_unique($dnsDomains))
+                $allSmartOutbounds,
+                array_values(array_unique($allDnsDomains)),
+                self::SMART_NAME . ' 🌐 ALL'
+            );
+        }
+
+        // Array insertion order preserves the country order from the
+        // original Xboard subscription.
+        foreach ($smartGroups as $smartGroup) {
+            $configs[] = $this->buildSmartConfig(
+                $smartGroup['outbounds'],
+                array_values(array_unique($smartGroup['dnsDomains'])),
+                self::SMART_NAME . ' ' . $smartGroup['label']
             );
         }
 
@@ -255,12 +286,16 @@ class XrayJson extends AbstractProtocol
         ];
     }
 
-    private function buildSmartConfig(array $proxyOutbounds, array $dnsDomains): array
+    private function buildSmartConfig(
+        array $proxyOutbounds,
+        array $dnsDomains,
+        string $remarks
+    ): array
     {
         $fallbackTag = (string) data_get($proxyOutbounds, '0.tag');
 
         return [
-            'remarks' => self::SMART_NAME,
+            'remarks' => $remarks,
             'burstObservatory' => [
                 'pingConfig' => [
                     'connectivity' => '',
@@ -1064,6 +1099,22 @@ class XrayJson extends AbstractProtocol
         $safe = trim($safe, '-');
 
         return $safe !== '' ? $safe : (string) ($index + 1);
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function detectCountryGroup(array $server): array
+    {
+        $name = (string) data_get($server, 'name', '');
+
+        if (preg_match('/[\x{1F1E6}-\x{1F1FF}]{2}/u', $name, $matches) === 1) {
+            $flag = $matches[0];
+
+            return [$flag, $flag];
+        }
+
+        return ['other', '🌐 Other'];
     }
 
     private function firstString(mixed $value): string
