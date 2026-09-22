@@ -401,7 +401,7 @@ class ClientController extends Controller
             ? Jalalian::fromCarbon(Carbon::createFromTimestamp($user['expired_at']))->format('Y/m/d')
             : 'بدون تاریخ انقضا';
 
-        $subscriptionUrl = $request->url();
+        $subscriptionUrl = preg_replace('#^http://#i', 'https://', $request->url());
 
         $renderer = new ImageRenderer(
             new RendererStyle(256),
