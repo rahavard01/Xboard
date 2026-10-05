@@ -244,6 +244,45 @@ class Helper
         return preg_replace('/\s+/', '', $config);
     }
 
+    /**
+     * Build the ECH value expected by Xray-compatible share links/configs.
+     *
+     * A configured ECHConfigList takes precedence. When only the public name
+     * is provided, Xray can discover the rotating ECH configuration through
+     * DNS using the resolver expression below.
+     */
+    public static function toXrayEchConfigList(
+        $ech = null,
+        string $defaultDnsServer = 'udp://8.8.8.8'
+    ): ?string {
+        $ech = self::normalizeEchSettings($ech);
+        if (!$ech) {
+            return null;
+        }
+
+        if ($config = self::toMihomoEchConfig($ech['config'] ?? null)) {
+            return $config;
+        }
+
+        $queryServerName = self::trimToNull(
+            $ech['query_server_name'] ?? null
+        );
+        if (!$queryServerName) {
+            return null;
+        }
+
+        if (str_contains($queryServerName, '://')) {
+            return $queryServerName;
+        }
+
+        $defaultDnsServer = trim($defaultDnsServer);
+        if ($defaultDnsServer === '') {
+            return $queryServerName;
+        }
+
+        return $queryServerName . '+' . $defaultDnsServer;
+    }
+
     public static function trimToNull($value): ?string
     {
         if (!is_string($value)) {

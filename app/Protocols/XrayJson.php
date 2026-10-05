@@ -752,6 +752,12 @@ class XrayJson extends AbstractProtocol
                 $tlsSettings['alpn'] = $alpn;
             }
 
+            if ($echConfigList = Helper::toXrayEchConfigList(
+                data_get($protocolSettings, 'tls_settings.ech')
+            )) {
+                $tlsSettings['echConfigList'] = $echConfigList;
+            }
+
             $pinnedPeerCertSha256 =
                 data_get($protocolSettings, 'tls_settings.pinnedPeerCertSha256')
                 ?? data_get($protocolSettings, 'tls_settings.pinned_peer_cert_sha256')

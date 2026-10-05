@@ -229,6 +229,11 @@ class Shadowrocket extends AbstractProtocol
                 if ($fp = Helper::getTlsFingerprint(data_get($protocol_settings, 'utls'))) {
                     $config['fp'] = $fp;
                 }
+                if ($ech = Helper::toXrayEchConfigList(
+                    data_get($protocol_settings, 'tls_settings.ech')
+                )) {
+                    $config['ech'] = $ech;
+                }
                 break;
             case 2:
                 $config['tls'] = 1;

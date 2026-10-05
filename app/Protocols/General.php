@@ -187,6 +187,12 @@ class General extends AbstractProtocol
                     $config['sni'] = $serverName;
                 }
 
+                if ($ech = Helper::toXrayEchConfigList(
+                    data_get($protocol_settings, 'tls_settings.ech')
+                )) {
+                    $config['ech'] = $ech;
+                }
+
                 /*
                  * Xray TLS certificate pinning.
                  *
